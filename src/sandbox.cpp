@@ -1505,7 +1505,7 @@ void Sandbox::onScreenshot(std::string _file) {
             int channels = 4;
 
             // Flip the image on Y
-            flipPixelsVertically<unsigned char>(pixels.get(), width, height, channels);
+            //flipPixelsVertically<unsigned char>(pixels.get(), width, height, channels);
 
             unsigned char buf[8192];
             int len = 0;
@@ -1515,7 +1515,7 @@ void Sandbox::onScreenshot(std::string _file) {
             len += buffer_write_short(buf+len, height);
             len += buffer_write_long(buf+len, width * height * 3);
 
-            std::cout << "Sending header: " << width << " " << height << " " << len << std::endl;
+            // std::cout << "Sending header: " << width << " " << height << " " << len << std::endl;
 
             int sent = sendall(m_stream_socket, buf, len);
             if (sent < 0) {
@@ -1527,7 +1527,8 @@ void Sandbox::onScreenshot(std::string _file) {
             // Send frame data
             len = 0;
 
-            for (int y = 0; y < height; y++) {
+            for (int y = height-1; y >= 0; y--) {
+            //for (int y = 0; y < height; y++) {
                 // std::cout << "row " << y << std::endl;
                 for (int x = 0; x < width; x++) {
                     int i = y * width + x;

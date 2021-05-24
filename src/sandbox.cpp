@@ -1515,6 +1515,8 @@ void Sandbox::onScreenshot(std::string _file) {
             len += buffer_write_short(buf+len, height);
             len += buffer_write_long(buf+len, width * height * 3);
 
+            std::cout << "Sending header: " << width << " " << height << " " << len << std::endl;
+
             int sent = sendall(m_stream_socket, buf, len);
             if (sent < 0) {
                 std::cout << "Failed to stream frame header" << std::endl;
@@ -1551,7 +1553,7 @@ void Sandbox::onScreenshot(std::string _file) {
 
             if (len > 0) {
                 // Flush the buffer
-                int sent = sendall(m_stream_socket, buf, 3);
+                int sent = sendall(m_stream_socket, buf, len);
                 if (sent < 0) {
                     std::cout << "Failed to stream frame data" << std::endl;
                     stream_stop();

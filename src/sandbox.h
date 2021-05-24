@@ -36,6 +36,9 @@ public:
     void                record( float _start, float _end, float fps = 24.0 );
     int                 getRecordedPercentage();
 
+    void                stream_start( std::string &host, std::string &port );
+    void                stream_stop();
+
     void                addDefine( const std::string &_define, const std::string &_value = "");
     void                delDefine( const std::string &_define );
 
@@ -118,6 +121,12 @@ private:
     float               m_record_end;
     int                 m_record_counter;
     bool                m_record;
+
+    // Stream output
+    std::string         m_stream_host;
+    std::string         m_stream_port;
+    int                 m_stream_socket;
+    bool                m_stream;
 
     // Histogram
     Shader              m_histogram_shader;

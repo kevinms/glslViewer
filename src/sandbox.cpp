@@ -22,6 +22,18 @@
 
 #include <memory>
 
+// Stream related dependencies
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
 std::string default_scene_frag = default_scene_frag0 + default_scene_frag1 + default_scene_frag2 + default_scene_frag3;
 
 int holoplay_width = 2048;
@@ -44,6 +56,8 @@ Sandbox::Sandbox():
     m_billboard_vbo(nullptr), m_cross_vbo(nullptr),
     // Record
     m_record_fdelta(0.04166666667), m_record_start(0.0f), m_record_head(0.0f), m_record_end(0.0f), m_record_counter(0), m_record(false),
+    // Stream output
+    m_stream_host(""), m_stream_port(""), m_stream_socket(-1), m_stream(false),
     // Histogram
     m_histogram_texture(nullptr), m_histogram(false),
     // Scene
@@ -641,6 +655,7 @@ bool Sandbox::haveChange() {
 
     return  m_change ||
             m_record ||
+            m_stream ||
             screenshotFile != "" ||
             m_scene.haveChange() ||
             uniforms.haveChange();
@@ -834,7 +849,7 @@ void Sandbox::render() {
     
     // MAIN SCENE
     // ----------------------------------------------- < main scene start
-    if (screenshotFile != "" || m_record)
+    if (screenshotFile != "" || m_record || m_stream)
         if (!m_record_fbo.isAllocated())
             m_record_fbo.allocate(getWindowWidth(), getWindowHeight(), COLOR_TEXTURE_DEPTH_BUFFER);
 
@@ -842,7 +857,7 @@ void Sandbox::render() {
         _updateSceneBuffer(getWindowWidth(), getWindowHeight());
         m_scene_fbo.bind();
     }
-    else if (screenshotFile != "" || m_record )
+    else if (screenshotFile != "" || m_record || m_stream )
         m_record_fbo.bind();
 
     // Clear the background
@@ -967,7 +982,7 @@ void Sandbox::render() {
     if (m_postprocessing) {
         m_scene_fbo.unbind();
 
-        if (screenshotFile != "" || m_record)
+        if (screenshotFile != "" || m_record || m_stream)
             m_record_fbo.bind();
     
         m_postprocessing_shader.use();
@@ -990,7 +1005,7 @@ void Sandbox::render() {
     else if (m_histogram) {
         m_scene_fbo.unbind();
 
-        if (screenshotFile != "" || m_record)
+        if (screenshotFile != "" || m_record || m_stream)
             m_record_fbo.bind();
 
         if (!m_billboard_shader.isLoaded())
@@ -1005,7 +1020,7 @@ void Sandbox::render() {
         m_billboard_vbo->render( &m_billboard_shader );
     }
     
-    if (screenshotFile != "" || m_record) {
+    if (screenshotFile != "" || m_record || m_stream) {
         m_record_fbo.unbind();
 
         if (!m_billboard_shader.isLoaded())
@@ -1194,6 +1209,9 @@ void Sandbox::renderDone() {
         onScreenshot(screenshotFile);
         screenshotFile = "";
     }
+    else if (m_stream) {
+        onScreenshot("");
+    }
 
     if (m_histogram)
         onHistogram();
@@ -1233,6 +1251,82 @@ void Sandbox::record(float _start, float _end, float fps) {
     m_record_end = _end;
     m_record_counter = 0;
     m_record = true;
+}
+
+int connect_tcp_stream(const char *host, const char *port) {
+    int sockfd;
+    struct addrinfo hints, *servinfo, *p;
+    int rv;
+
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if ((rv = getaddrinfo(host, port, &hints, &servinfo)) != 0) {
+        std::cout << "getaddrinfo: " << gai_strerror(rv) << std::endl;
+        return -1;
+    }
+
+    // loop through all the results and connect to the first we can
+    for(p = servinfo; p != NULL; p = p->ai_next) {
+        if ((sockfd = socket(p->ai_family, p->ai_socktype,
+                p->ai_protocol)) == -1) {
+            std::cout << "client: socket" << strerror(errno) << std::endl;
+            continue;
+        }
+
+        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+            close(sockfd);
+            std::cout << "client: connect" << strerror(errno) << std::endl;
+            continue;
+        }
+
+        break;
+    }
+
+    if (p == NULL) {
+        std::cout << "client: failed to connect" << std::endl;
+        return -1;
+    }
+
+    freeaddrinfo(servinfo); // all done with this structure
+
+    return sockfd;
+}
+
+void Sandbox::stream_start(std::string &host, std::string &port) {
+    if (m_stream) {
+        std::cout << "Found existing stream." << std::endl;
+        stream_stop();
+    }
+
+    // Connect to socket
+    m_stream_socket = connect_tcp_stream(host.c_str(), port.c_str());
+    if (m_stream_socket < 0) {
+        m_stream_socket = -1;
+        std::cout << "Failed to connect to " << host << ":" << port << std::endl;
+        return;
+    }
+
+    std::cout << "Started stream to " << host << ":" << port << std::endl;
+
+    m_stream = true;
+    m_stream_host = host;
+    m_stream_port = port;
+}
+
+void Sandbox::stream_stop() {
+    // Close socket
+    if (m_stream) {
+        std::cout << "Stopping stream to " << m_stream_host << ":" << m_stream_port << std::endl;
+
+        close(m_stream_socket);
+    }
+
+    m_stream = false;
+    m_stream_host = "";
+    m_stream_port = "";
+    m_stream_socket = -1;
 }
 
 void Sandbox::printDependencies(ShaderType _type) const {
@@ -1355,20 +1449,116 @@ void Sandbox::onViewportResize(int _newWidth, int _newHeight) {
     if (m_postprocessing || m_histogram)
         _updateSceneBuffer(_newWidth, _newHeight);
 
-    if (m_record || screenshotFile != "")
+    if (m_record || screenshotFile != "" || m_stream)
         m_record_fbo.allocate(_newWidth, _newHeight, COLOR_TEXTURE_DEPTH_BUFFER);
 
     flagChange();
 }
 
+int sendall(int sockfd, unsigned char *buf, int len)
+{
+    int totalSent = 0;
+    int bytesToSend = len;
+    int n;
+
+    while(totalSent < len) {
+        n = send(sockfd, buf+totalSent, bytesToSend, MSG_NOSIGNAL);
+        if (n < 0) {
+            return -1;
+        }
+        totalSent += n;
+        bytesToSend -= n;
+    }
+
+    return totalSent;
+}
+
+int buffer_write_short(unsigned char *buf, int d) {
+    buf[0] = (d>>8)&0xff;
+    buf[1] = d&0xff;
+    return 2;
+}
+
+int buffer_write_long(unsigned char *buf, int d) {
+    buf[0] = (d>>24)&0xff;
+    buf[1] = (d>>16)&0xff;
+    buf[2] = (d>>8)&0xff;
+    buf[3] = d&0xff;
+    return 4;
+}
+
 void Sandbox::onScreenshot(std::string _file) {
-    if (_file != "" && isGL()) {
+    if ((_file != "" || m_stream) && isGL()) {
         glBindFramebuffer(GL_FRAMEBUFFER, m_record_fbo.getId());
 
         if (getExt(_file) == "hdr") {
             float* pixels = new float[getWindowWidth() * getWindowHeight()*4];
             glReadPixels(0, 0, getWindowWidth(), getWindowHeight(), GL_RGBA, GL_FLOAT, pixels);
             savePixelsHDR(_file, pixels, getWindowWidth(), getWindowHeight());
+        }
+        else if (m_stream) {
+            int width = getWindowWidth();
+            int height = getWindowHeight();
+            auto pixels = std::unique_ptr<unsigned char[]>(new unsigned char [width * height * 4]);
+            glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.get());
+
+            int channels = 4;
+
+            // Flip the image on Y
+            flipPixelsVertically<unsigned char>(pixels.get(), width, height, channels);
+
+            unsigned char buf[8192];
+            int len = 0;
+
+            // Send a frame header
+            len += buffer_write_short(buf+len, width);
+            len += buffer_write_short(buf+len, height);
+            len += buffer_write_long(buf+len, width * height * 3);
+
+            int sent = sendall(m_stream_socket, buf, len);
+            if (sent < 0) {
+                std::cout << "Failed to stream frame header" << std::endl;
+                stream_stop();
+                return;
+            }
+
+            // Send frame data
+            len = 0;
+
+            for (int y = 0; y < height; y++) {
+                // std::cout << "row " << y << std::endl;
+                for (int x = 0; x < width; x++) {
+                    int i = y * width + x;
+
+                    i *= channels;
+
+                    if (len+3 > int(sizeof(buf))) {
+                        // Flush the buffer
+                        int sent = sendall(m_stream_socket, buf, len);
+                        if (sent < 0) {
+                            std::cout << "Failed to stream frame data" << std::endl;
+                            stream_stop();
+                            return;
+                        }
+                        len = 0;
+                    }
+
+                    buf[len] = pixels[i+1]; len++;
+                    buf[len] = pixels[i+0]; len++;
+                    buf[len] = pixels[i+2]; len++;
+                }
+            }
+
+            if (len > 0) {
+                // Flush the buffer
+                int sent = sendall(m_stream_socket, buf, 3);
+                if (sent < 0) {
+                    std::cout << "Failed to stream frame data" << std::endl;
+                    stream_stop();
+                    return;
+                }
+                len = 0;
+            }
         }
         else {
             int width = getWindowWidth();
@@ -1435,7 +1625,7 @@ void Sandbox::onScreenshot(std::string _file) {
             }
         }
     
-        if (!m_record) {
+        if (!m_record && !m_stream) {
             std::cout << "// Screenshot saved to " << _file << std::endl;
             std::cout << "// > ";
         }

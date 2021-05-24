@@ -562,6 +562,29 @@ void declareCommands() {
     },
     "sequence,<A_sec>,<B_sec>[,fps] saves a sequence of images from A to B second.", false));
 
+    commands.push_back(Command("stream", [&](const std::string& _line){
+        std::vector<std::string> values = split(_line,',');
+        if (values.size() == 3) {
+            consoleMutex.lock();
+            sandbox.stream_start(values[1], values[2]);
+            consoleMutex.unlock();
+            return true;
+        }
+        return false;
+    },
+    "stream,<host>,<port>           streams frame data over tcp connection to <host>:<port>.", false));
+
+    commands.push_back(Command("streamoff", [&](const std::string& _line){
+        if (_line == "streamoff") {
+            consoleMutex.lock();
+            sandbox.stream_stop();
+            consoleMutex.unlock();
+            return true;
+        }
+        return false;
+    },
+    "streamoff                      stops writing stream data.", false));
+
     commands.push_back(Command("q", [&](const std::string& _line){ 
         if (_line == "q") {
             bRun.store(false);

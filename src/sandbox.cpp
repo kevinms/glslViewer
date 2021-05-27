@@ -1477,13 +1477,6 @@ int sendall(int sockfd, unsigned char *buf, int len)
     return totalSent;
 }
 
-//TODO: Use htons
-int buffer_write_short(unsigned char *buf, int d) {
-    buf[0] = (d>>8)&0xff;
-    buf[1] = d&0xff;
-    return 2;
-}
-
 //TODO: Use htonl
 int buffer_write_long(unsigned char *buf, int d) {
     buf[0] = (d>>24)&0xff;
@@ -1493,17 +1486,16 @@ int buffer_write_long(unsigned char *buf, int d) {
     return 4;
 }
 
-// OctoWS2811 is a high performance WS2811 & WS2812 & WS2812B LED library.
-// The pixel data is encoded in a very specific format.
+// Sends data encoded in a format that the OctoWS2811 LED library supports.
 int Sandbox::sendOctoWS2811Frame(unsigned char *pixels, int width, int height, int channels) {
-    //NOTE: Each channel is assumed to be 1 byte and the first 3 channels are assumed to be RGB.
+    //NOTE: Assumes 8-bit channels and the first 3 channels are RGB.
     if (channels < 3) {
-        std::cout << "Streaming OctoWS2811 formated data requires at least 3 color channels (r,g,b)" << std::endl;
+        std::cout << "Streaming OctoWS2811 formated data requires at least 3 color channels (RGB)" << std::endl;
         streamStop();
         return -1;
     }
 
-    //NOTE: OctoWS2811 does support more than 8 rows but it's a slightly more
+    //NOTE: OctoWS2811 actually supports multiples of 8 rows, but it's a slightly more
     //      complicated encoding that this code does not currently do.
     if (height > 8) {
         std::cout << "Streaming OctoWS2811 formated data supports a maximum of 8 rows" << std::endl;
@@ -1514,7 +1506,6 @@ int Sandbox::sendOctoWS2811Frame(unsigned char *pixels, int width, int height, i
     // Width pixels * 8 rows * 3 channels
     int frame_len = width * 8 * 3;
 
-    // Space is always allocated for 8 rows of data but only 'height' rows is actually filled.
     // 4 header bytes + frame data
     const int header_len = 4;
     int buf_len = header_len + frame_len;
@@ -1556,26 +1547,20 @@ int Sandbox::sendOctoWS2811Frame(unsigned char *pixels, int width, int height, i
             int i = y * width + x;
             i *= channels;
 
-            // For each input color channel (RGB)
             for (int channel = 0; channel < 3; channel++) {
+                int output_channel = mapInputToOutputChannel[channel];
 
-                // Map to GRB.
-                int outputChannel = mapInputToOutputChannel[channel];
-
-                // For each bit in the input channel (8 bits/channel)
                 for (int bit = 0; bit < 8; bit++) {
-                    int channelData = pixels[i+channel];
-
-                    // The value of the current channel bit we are processing
-                    int channelBit = 0x1 & (channelData >> bit);
+                    int channel_byte = pixels[i+channel];
+                    int channel_bit = 0x1 & (channel_byte >> bit);
 
                     // Which byte in the output buffer
-                    int which_byte = x * 8 * 3 + (7 - bit) + (8*outputChannel);
+                    int output_byte = x * 8 * 3 + (7 - bit) + (8 * output_channel);
                     // Which bit in the output byte
-                    int which_bit = y;
+                    int output_bit = y;
 
                     // Combine with output buffer
-                    frame[which_byte] |= channelBit << which_bit;
+                    frame[output_byte] |= channel_bit << output_bit;
                 }
 
             }
@@ -1584,6 +1569,7 @@ int Sandbox::sendOctoWS2811Frame(unsigned char *pixels, int width, int height, i
     }
 
     // Send frame
+    std::cout << "Sending " << buf_len << " bytes" << std::endl;
     int sent = sendall(m_stream_socket, buf.get(), buf_len);
     if (sent < 0) {
         std::cout << "Failed to stream frame" << std::endl;

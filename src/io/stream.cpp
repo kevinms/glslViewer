@@ -1,11 +1,16 @@
-//TODO: Add support for windows
-//TODO: make sure proper c++ versions of headers are being included
-#include <unistd.h>
-#include <netdb.h>
-#include <sys/types.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
+//TODO: Test Windows,Linux,Mac
+
+#ifdef _WIN32
+  #include <winsock2.h>
+  #include <Ws2tcpip.h>
+#else
+  /* Assume that any non-Windows platform uses POSIX-style sockets instead. */
+  #include <sys/socket.h>
+  #include <arpa/inet.h>
+  #include <netdb.h>  /* Needed for getaddrinfo() and freeaddrinfo() */
+  #include <unistd.h> /* Needed for close() */
+#endif
+
 
 #include <iostream>
 #include <cstring>
@@ -18,12 +23,34 @@ NetworkStream::NetworkStream() {
 
 NetworkStream::~NetworkStream() {
     stop();
+
+}
+
+void closeTcpStream(int sockfd) {
+#ifdef _WIN32
+    closesocket(new_conn_fd);
+#else
+    close(sockfd);
+#endif
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
 }
 
 int connectTcpStream(const char *host, const char *port) {
     int sockfd;
     struct addrinfo hints, *servinfo, *p;
     int rv;
+
+#ifdef _WIN32
+    WSADATA wsa_data;
+    int rv = WSAStartup(MAKEWORD(2,2), &wsa_data);
+    if (rv != NO_ERROR) {
+        std::cout << "WSAStartup failed with error: " << rv << std::endl;
+        return -1;
+    }
+#endif
 
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_UNSPEC;
@@ -43,7 +70,7 @@ int connectTcpStream(const char *host, const char *port) {
         }
 
         if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
-            close(sockfd);
+            closeTcpStream(sockfd);
             std::cout << "client: connect " << strerror(errno) << std::endl;
             continue;
         }
@@ -80,12 +107,12 @@ int sendall(int sockfd, unsigned char *buf, int len)
 }
 
 //TODO: Use htonl
-int buffer_write_long(unsigned char *buf, int d) {
-    // d = std::htonl((uint32_t)d);
-    buf[0] = (d>>24)&0xff;
-    buf[1] = (d>>16)&0xff;
-    buf[2] = (d>>8)&0xff;
-    buf[3] = d&0xff;
+int buffer_write_long(unsigned char *buf, uint32_t d) {
+    *(uint32_t*)buf = htonl(d);
+    // buf[0] = (d>>24)&0xff;
+    // buf[1] = (d>>16)&0xff;
+    // buf[2] = (d>>8)&0xff;
+    // buf[3] = d&0xff;
     return 4;
 }
 
@@ -115,7 +142,7 @@ void NetworkStream::stop() {
     // Close socket
     if (m_streaming) {
         std::cout << "Stopping stream to " << m_host << ":" << m_port << std::endl;
-        close(m_socket);
+        closeTcpStream(m_socket);
     }
 
     m_streaming = false;

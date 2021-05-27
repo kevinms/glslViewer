@@ -2,6 +2,7 @@
 
 #include "scene/scene.h"
 #include "types/list.h"
+#include "io/stream.h"
 
 #include "thread_pool/thread_pool.hpp"
 
@@ -10,12 +11,6 @@
 enum ShaderType {
     FRAGMENT = 0,
     VERTEX = 1
-};
-
-enum StreamFormat {
-    STREAM_FORMAT_RAW = 0,
-    STREAM_FORMAT_OCTOWS2811 = 1,
-    STREAM_FORMAT_OLD = 2,
 };
 
 class Sandbox {
@@ -129,11 +124,7 @@ private:
     bool                m_record;
 
     // Stream output
-    std::string         m_stream_host;
-    std::string         m_stream_port;
-    int                 m_stream_socket;
-    StreamFormat        m_stream_format;
-    bool                m_stream;
+    NetworkStream       m_stream;
 
     int                 sendOctoWS2811Frame(unsigned char *pixels, int width, int height, int channels);
     int                 sendOldOcto(unsigned char *pixels, int width, int height, int channels);

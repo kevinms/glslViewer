@@ -22,18 +22,6 @@
 
 #include <memory>
 
-// Stream related dependencies
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <errno.h>
-#include <string.h>
-#include <netdb.h>
-#include <sys/types.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-
 std::string default_scene_frag = default_scene_frag0 + default_scene_frag1 + default_scene_frag2 + default_scene_frag3;
 
 int holoplay_width = 2048;
@@ -56,8 +44,6 @@ Sandbox::Sandbox():
     m_billboard_vbo(nullptr), m_cross_vbo(nullptr),
     // Record
     m_record_fdelta(0.04166666667), m_record_start(0.0f), m_record_head(0.0f), m_record_end(0.0f), m_record_counter(0), m_record(false),
-    // Stream output
-    m_stream_host(""), m_stream_port(""), m_stream_socket(-1), m_stream_format(STREAM_FORMAT_RAW), m_stream(false),
     // Histogram
     m_histogram_texture(nullptr), m_histogram(false),
     // Scene
@@ -141,10 +127,6 @@ Sandbox::~Sandbox() {
     }
     while (m_task_count > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds{10});
-    }
-
-    if (m_stream) {
-        streamStop();
     }
 }
 
@@ -659,7 +641,7 @@ bool Sandbox::haveChange() {
 
     return  m_change ||
             m_record ||
-            m_stream ||
+            m_stream.isStreaming() ||
             screenshotFile != "" ||
             m_scene.haveChange() ||
             uniforms.haveChange();
@@ -853,7 +835,7 @@ void Sandbox::render() {
     
     // MAIN SCENE
     // ----------------------------------------------- < main scene start
-    if (screenshotFile != "" || m_record || m_stream)
+    if (screenshotFile != "" || m_record || m_stream.isStreaming())
         if (!m_record_fbo.isAllocated())
             m_record_fbo.allocate(getWindowWidth(), getWindowHeight(), COLOR_TEXTURE_DEPTH_BUFFER);
 
@@ -861,7 +843,7 @@ void Sandbox::render() {
         _updateSceneBuffer(getWindowWidth(), getWindowHeight());
         m_scene_fbo.bind();
     }
-    else if (screenshotFile != "" || m_record || m_stream )
+    else if (screenshotFile != "" || m_record || m_stream.isStreaming() )
         m_record_fbo.bind();
 
     // Clear the background
@@ -986,7 +968,7 @@ void Sandbox::render() {
     if (m_postprocessing) {
         m_scene_fbo.unbind();
 
-        if (screenshotFile != "" || m_record || m_stream)
+        if (screenshotFile != "" || m_record || m_stream.isStreaming())
             m_record_fbo.bind();
     
         m_postprocessing_shader.use();
@@ -1009,7 +991,7 @@ void Sandbox::render() {
     else if (m_histogram) {
         m_scene_fbo.unbind();
 
-        if (screenshotFile != "" || m_record || m_stream)
+        if (screenshotFile != "" || m_record || m_stream.isStreaming())
             m_record_fbo.bind();
 
         if (!m_billboard_shader.isLoaded())
@@ -1024,7 +1006,7 @@ void Sandbox::render() {
         m_billboard_vbo->render( &m_billboard_shader );
     }
     
-    if (screenshotFile != "" || m_record || m_stream) {
+    if (screenshotFile != "" || m_record || m_stream.isStreaming()) {
         m_record_fbo.unbind();
 
         if (!m_billboard_shader.isLoaded())
@@ -1213,7 +1195,7 @@ void Sandbox::renderDone() {
         onScreenshot(screenshotFile);
         screenshotFile = "";
     }
-    else if (m_stream) {
+    else if (m_stream.isStreaming()) {
         onScreenshot("");
     }
 
@@ -1257,80 +1239,12 @@ void Sandbox::record(float _start, float _end, float fps) {
     m_record = true;
 }
 
-int connectTcpStream(const char *host, const char *port) {
-    int sockfd;
-    struct addrinfo hints, *servinfo, *p;
-    int rv;
-
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    if ((rv = getaddrinfo(host, port, &hints, &servinfo)) != 0) {
-        std::cout << "getaddrinfo: " << gai_strerror(rv) << std::endl;
-        return -1;
-    }
-
-    // Connect to the first we can address we can
-    for(p = servinfo; p != NULL; p = p->ai_next) {
-        if ((sockfd = socket(p->ai_family, p->ai_socktype,
-                p->ai_protocol)) == -1) {
-            std::cout << "client: socket " << strerror(errno) << std::endl;
-            continue;
-        }
-
-        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
-            close(sockfd);
-            std::cout << "client: connect " << strerror(errno) << std::endl;
-            continue;
-        }
-
-        break;
-    }
-
-    if (p == NULL) {
-        std::cout << "client: failed to connect" << std::endl;
-        return -1;
-    }
-
-    freeaddrinfo(servinfo);
-
-    return sockfd;
-}
-
 void Sandbox::streamStart(std::string &host, std::string &port, StreamFormat format) {
-    if (m_stream) {
-        std::cout << "Found existing stream." << std::endl;
-        streamStop();
-    }
-
-    // Connect to socket
-    m_stream_socket = connectTcpStream(host.c_str(), port.c_str());
-    if (m_stream_socket < 0) {
-        m_stream_socket = -1;
-        std::cout << "Failed to connect to " << host << ":" << port << std::endl;
-        return;
-    }
-
-    std::cout << "Started stream to " << host << ":" << port << std::endl;
-
-    m_stream = true;
-    m_stream_host = host;
-    m_stream_port = port;
-    m_stream_format = format;
+    m_stream.start(host, port, format);
 }
 
 void Sandbox::streamStop() {
-    // Close socket
-    if (m_stream) {
-        std::cout << "Stopping stream to " << m_stream_host << ":" << m_stream_port << std::endl;
-        close(m_stream_socket);
-    }
-
-    m_stream = false;
-    m_stream_host = "";
-    m_stream_port = "";
-    m_stream_socket = -1;
+    m_stream.stop();
 }
 
 void Sandbox::printDependencies(ShaderType _type) const {
@@ -1453,281 +1367,14 @@ void Sandbox::onViewportResize(int _newWidth, int _newHeight) {
     if (m_postprocessing || m_histogram)
         _updateSceneBuffer(_newWidth, _newHeight);
 
-    if (m_record || screenshotFile != "" || m_stream)
+    if (m_record || screenshotFile != "" || m_stream.isStreaming())
         m_record_fbo.allocate(_newWidth, _newHeight, COLOR_TEXTURE_DEPTH_BUFFER);
 
     flagChange();
 }
 
-int sendall(int sockfd, unsigned char *buf, int len)
-{
-    int totalSent = 0;
-    int bytesToSend = len;
-    int n;
-
-    while(totalSent < len) {
-        n = send(sockfd, buf+totalSent, bytesToSend, MSG_NOSIGNAL);
-        if (n < 0) {
-            return -1;
-        }
-        totalSent += n;
-        bytesToSend -= n;
-    }
-
-    return totalSent;
-}
-
-//TODO: Use htonl
-int buffer_write_long(unsigned char *buf, int d) {
-    buf[0] = (d>>24)&0xff;
-    buf[1] = (d>>16)&0xff;
-    buf[2] = (d>>8)&0xff;
-    buf[3] = d&0xff;
-    return 4;
-}
-
-// Sends data encoded in a format that the OctoWS2811 LED library supports.
-int Sandbox::sendOctoWS2811Frame(unsigned char *pixels, int width, int height, int channels) {
-    //NOTE: Assumes 8-bit channels and the first 3 channels are RGB.
-    if (channels < 3) {
-        std::cout << "Streaming OctoWS2811 formated data requires at least 3 color channels (RGB)" << std::endl;
-        streamStop();
-        return -1;
-    }
-
-    //NOTE: OctoWS2811 actually supports multiples of 8 rows, but it's a slightly more
-    //      complicated encoding that this code does not currently do.
-    if (height > 8) {
-        std::cout << "Streaming OctoWS2811 formated data supports a maximum of 8 rows" << std::endl;
-        streamStop();
-        return -1;
-    }
-
-    // Width pixels * 8 rows * 3 channels
-    int frame_len = width * 8 * 3;
-
-    // 4 header bytes + frame data
-    const int header_len = 4;
-    int buf_len = header_len + frame_len;
-
-    auto buf = std::unique_ptr<unsigned char[]>(new unsigned char [buf_len]);
-    memset(buf.get(), 0, buf_len);
-
-    unsigned char *header = buf.get();
-    unsigned char *frame = buf.get() + header_len;
-
-    // Pack frame header
-    buffer_write_long(header, frame_len);
-
-    // Pack frame data
-    //
-    // The format is a bit odd.
-    //
-    // All color data for row 0 is encoded in bit 0 of every output byte.
-    // All color data for row 1 is encoded in bit 1 of every output byte.
-    // <...>
-    // All color data for row 7 is encoded in bit 7 of every output byte.
-    //
-    // A single 8-bit color channel of input is spread out and encoded over
-    // 8 bytes. One bit per byte. It takes 24 bytes to encode 3 color channels.
-    //
-    // To comlicate matters more, color data is expected in GRB order.
-    //
-    // So, the first 24 bytes of output encodes the first pixel of every row.
-    // The second 24 bytes encodes the second pixel of every row. Etc.
-    //
-    // I'll assume you understand now and move on :-)
-    const int mapInputToOutputChannel[3] = {1, 0, 2};
-
-    // We loop over input and compute output.
-    for (int x = 0; x < width; x++) {
-        for (int y = 0; y < height; y++) {
-
-            // Index into the input buffer of the current pixel's color data
-            int i = y * width + x;
-            i *= channels;
-
-            for (int channel = 0; channel < 3; channel++) {
-                int output_channel = mapInputToOutputChannel[channel];
-
-                for (int bit = 0; bit < 8; bit++) {
-                    int channel_byte = pixels[i+channel];
-                    int channel_bit = 0x1 & (channel_byte >> bit);
-
-                    // Which byte in the output buffer
-                    int output_byte = x * 8 * 3 + (7 - bit) + (8 * output_channel);
-                    // Which bit in the output byte
-                    int output_bit = y;
-
-                    // Combine with output buffer
-                    frame[output_byte] |= channel_bit << output_bit;
-                }
-
-            }
-
-        }
-    }
-
-    // Send frame
-    std::cout << "Sending " << buf_len << " bytes" << std::endl;
-    int sent = sendall(m_stream_socket, buf.get(), buf_len);
-    if (sent < 0) {
-        std::cout << "Failed to stream frame" << std::endl;
-        streamStop();
-        return -1;
-    }
-
-    return 0;
-}
-
-int Sandbox::sendRawFrame(unsigned char *data, int data_len) {
-    const int header_len = 4;
-    unsigned char header[header_len];
-
-    buffer_write_long(header, data_len);
-
-    // Send frame header
-    int sent = sendall(m_stream_socket, header, header_len);
-    if (sent < 0) {
-        std::cout << "Failed to stream frame header" << std::endl;
-        streamStop();
-        return -1;
-    }
-
-    // Send frame data
-    sent = sendall(m_stream_socket, data, data_len);
-    if (sent < 0) {
-        std::cout << "Failed to stream frame data" << std::endl;
-        streamStop();
-        return -1;
-    }
-
-    return 0;
-}
-
-int Sandbox::sendOldOcto(unsigned char *pixels, int width, int height, int channels) {
-    int frame_len = width * 6 * 4;
-    auto frame = std::unique_ptr<unsigned char[]>(new unsigned char [frame_len]);
-    memset(frame.get(), 0, frame_len);
-
-    for (int x = 0; x < width; x++) {
-        for (int y = 0; y < height; y++) {
-            int i = y * width + x;
-
-            i *= channels;
-
-            unsigned char r = pixels[i+0];
-            unsigned char g = pixels[i+1];
-            unsigned char b = pixels[i+2];
-
-            for (int bit = 0; bit < 8; bit++) {
-                int data = 0x1 & (g >> bit);
-
-                int which_byte = x * 6 * 4 + (7 - bit) + 0;
-                int which_bit = y;
-
-                int v = data << which_bit;
-
-                frame[which_byte] |= v;
-            }
-
-            for (int bit = 0; bit < 8; bit++) {
-                int data = 0x1 & (r >> bit);
-
-                int which_byte = x * 6 * 4 + (7 - bit) + 8;
-                int which_bit = y;
-
-                int v = data << which_bit;
-
-                frame[which_byte] |= v;
-            }
-
-            for (int bit = 0; bit < 8; bit++) {
-                int data = 0x1 & (b >> bit);
-
-                int which_byte = x * 6 * 4 + (7 - bit) + 16;
-                int which_bit = y;
-
-                int v = data << which_bit;
-
-                frame[which_byte] |= v;
-            }
-
-        }
-    }
-
-    unsigned char buf[8192];
-    int len = 0;
-
-    // Send a frame header
-#if 0
-    len += buffer_write_short(buf+len, width);
-    len += buffer_write_short(buf+len, height);
-#endif
-    len += buffer_write_long(buf+len, frame_len);
-
-    // std::cout << "Sending header: " << width << " " << height << " " << len << std::endl;
-
-    int sent = sendall(m_stream_socket, buf, len);
-    if (sent < 0) {
-        std::cout << "Failed to stream frame header" << std::endl;
-        streamStop();
-        return -1;
-    }
-
-    // Send frame data
-    sent = sendall(m_stream_socket, frame.get(), frame_len);
-    if (sent < 0) {
-        std::cout << "Failed to stream frame data" << std::endl;
-        streamStop();
-        return -1;
-    }
-
-#if 0
-    // Send frame data
-    len = 0;
-
-    for (int y = height-1; y >= 0; y--) {
-    //for (int y = 0; y < height; y++) {
-        // std::cout << "row " << y << std::endl;
-        for (int x = 0; x < width; x++) {
-            int i = y * width + x;
-
-            i *= channels;
-
-            if (len+3 > int(sizeof(buf))) {
-                // Flush the buffer
-                int sent = sendall(m_stream_socket, buf, len);
-                if (sent < 0) {
-                    std::cout << "Failed to stream frame data" << std::endl;
-                    streamStop();
-                    return -1;
-                }
-                len = 0;
-            }
-
-            buf[len] = pixels[i+1]; len++;
-            buf[len] = pixels[i+0]; len++;
-            buf[len] = pixels[i+2]; len++;
-        }
-    }
-
-    if (len > 0) {
-        // Flush the buffer
-        int sent = sendall(m_stream_socket, buf, len);
-        if (sent < 0) {
-            std::cout << "Failed to stream frame data" << std::endl;
-            streamStop();
-            return -1;
-        }
-        len = 0;
-    }
-#endif
-    return 0;
-}
-
 void Sandbox::onScreenshot(std::string _file) {
-    if ((_file != "" || m_stream) && isGL()) {
+    if ((_file != "" || m_stream.isStreaming()) && isGL()) {
         glBindFramebuffer(GL_FRAMEBUFFER, m_record_fbo.getId());
 
         if (getExt(_file) == "hdr") {
@@ -1735,7 +1382,7 @@ void Sandbox::onScreenshot(std::string _file) {
             glReadPixels(0, 0, getWindowWidth(), getWindowHeight(), GL_RGBA, GL_FLOAT, pixels);
             savePixelsHDR(_file, pixels, getWindowWidth(), getWindowHeight());
         }
-        else if (m_stream) {
+        else if (m_stream.isStreaming()) {
             int width = getWindowWidth();
             int height = getWindowHeight();
             int channels = 4;
@@ -1746,21 +1393,7 @@ void Sandbox::onScreenshot(std::string _file) {
             // Flip the image on Y
             flipPixelsVertically<unsigned char>(pixels.get(), width, height, channels);
 
-            switch(m_stream_format) {
-                case STREAM_FORMAT_OCTOWS2811:
-                    sendOctoWS2811Frame(pixels.get(), width, height, channels);
-                    break;
-                case STREAM_FORMAT_OLD:
-                    sendOldOcto(pixels.get(), width, height, channels);
-                    break;
-                case STREAM_FORMAT_RAW:
-                    sendRawFrame(pixels.get(), width * height * channels);
-                    break;
-                default:
-                    std::cout << "Unsupported stream format?!" << std::endl;
-                    streamStop();
-                    break;
-            }
+            m_stream.sendFrame(pixels.get(), width, height, channels);
         }
         else {
             int width = getWindowWidth();
@@ -1827,7 +1460,7 @@ void Sandbox::onScreenshot(std::string _file) {
             }
         }
     
-        if (!m_record && !m_stream) {
+        if (!m_record && !m_stream.isStreaming()) {
             std::cout << "// Screenshot saved to " << _file << std::endl;
             std::cout << "// > ";
         }

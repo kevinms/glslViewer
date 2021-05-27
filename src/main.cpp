@@ -566,7 +566,7 @@ void declareCommands() {
         std::vector<std::string> values = split(_line,',');
         if (values.size() == 3) {
             consoleMutex.lock();
-            sandbox.stream_start(values[1], values[2]);
+            sandbox.streamStart(values[1], values[2], STREAM_FORMAT_OCTOWS2811);
             consoleMutex.unlock();
             return true;
         }
@@ -577,7 +577,7 @@ void declareCommands() {
     commands.push_back(Command("streamoff", [&](const std::string& _line){
         if (_line == "streamoff") {
             consoleMutex.lock();
-            sandbox.stream_stop();
+            sandbox.streamStop();
             consoleMutex.unlock();
             return true;
         }

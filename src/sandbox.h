@@ -12,6 +12,12 @@ enum ShaderType {
     VERTEX = 1
 };
 
+enum StreamFormat {
+    STREAM_FORMAT_RAW = 0,
+    STREAM_FORMAT_OCTOWS2811 = 1,
+    STREAM_FORMAT_OLD = 2,
+};
+
 class Sandbox {
 public:
     Sandbox();
@@ -36,8 +42,8 @@ public:
     void                record( float _start, float _end, float fps = 24.0 );
     int                 getRecordedPercentage();
 
-    void                stream_start( std::string &host, std::string &port );
-    void                stream_stop();
+    void                streamStart( std::string &host, std::string &port, StreamFormat format );
+    void                streamStop();
 
     void                addDefine( const std::string &_define, const std::string &_value = "");
     void                delDefine( const std::string &_define );
@@ -126,7 +132,12 @@ private:
     std::string         m_stream_host;
     std::string         m_stream_port;
     int                 m_stream_socket;
+    StreamFormat        m_stream_format;
     bool                m_stream;
+
+    int                 sendOctoWS2811Frame(unsigned char *pixels, int width, int height, int channels);
+    int                 sendOldOcto(unsigned char *pixels, int width, int height, int channels);
+    int                 sendRawFrame(unsigned char *pixels, int pixels_len);
 
     // Histogram
     Shader              m_histogram_shader;

@@ -12,7 +12,7 @@ public:
     NetworkStream();
     ~NetworkStream();
 
-    void start(std::string &host, std::string &port, StreamFormat format);
+    int start(std::string &host, std::string &port, StreamFormat format);
     void stop();
     bool isStreaming();
 

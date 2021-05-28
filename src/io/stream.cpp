@@ -116,7 +116,7 @@ int buffer_write_long(unsigned char *buf, uint32_t d) {
     return 4;
 }
 
-void NetworkStream::start(std::string &host, std::string &port, StreamFormat format) {
+int NetworkStream::start(std::string &host, std::string &port, StreamFormat format) {
     if (m_streaming) {
         std::cout << "Found existing stream." << std::endl;
         stop();
@@ -127,7 +127,7 @@ void NetworkStream::start(std::string &host, std::string &port, StreamFormat for
     if (m_socket < 0) {
         m_socket = -1;
         std::cout << "Failed to connect to " << host << ":" << port << std::endl;
-        return;
+        return -1;
     }
 
     std::cout << "Started stream to " << host << ":" << port << std::endl;
@@ -136,6 +136,8 @@ void NetworkStream::start(std::string &host, std::string &port, StreamFormat for
     m_host = host;
     m_port = port;
     m_format = format;
+
+    return 0;
 }
 
 void NetworkStream::stop() {
@@ -232,13 +234,13 @@ int NetworkStream::sendOctoWS2811Frame(unsigned char *pixels, int width, int hei
     //
     // All color data for row 0 is encoded in bit 0 of every output byte.
     // All color data for row 1 is encoded in bit 1 of every output byte.
-    // <...>
+    // ...
     // All color data for row 7 is encoded in bit 7 of every output byte.
     //
     // A single 8-bit color channel of input is spread out and encoded over
     // 8 bytes. One bit per byte. It takes 24 bytes to encode 3 color channels.
     //
-    // To comlicate matters more, color data is expected in GRB order.
+    // To complicate matters more, color data is expected in GRB order.
     //
     // So, the first 24 bytes of output encodes the first pixel of every row.
     // The second 24 bytes encodes the second pixel of every row. Etc.

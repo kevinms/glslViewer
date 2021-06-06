@@ -278,7 +278,7 @@ int NetworkStream::sendOctoWS2811Frame(unsigned char *pixels, int width, int hei
     }
 
     // Send frame
-    std::cout << "Sending " << buf_len << " bytes" << std::endl;
+    //std::cout << "Sending " << buf_len << " bytes" << std::endl;
     int sent = sendall(m_socket, buf.get(), buf_len);
     if (sent < 0) {
         std::cout << "Failed to stream frame" << std::endl;
